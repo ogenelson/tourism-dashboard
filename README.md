@@ -3,6 +3,8 @@
 > **MSc Dissertation — Bangor University (2025–2026)**
 > **MSc Artificial Intelligence and Data Science — Distinction**
 
+> **Note:** The dashboard has been refined since the original dissertation submission, and this repository reflects the current version of the project.
+
 An interactive web dashboard built with Python and Dash to help non-technical users explore international tourism data across countries and years.
 
 This project was developed as an MSc dissertation using the **Five Design-Sheet (FDS)** methodology across four iterative prototypes, with formative evaluation at each stage using the **Critical Design Strategy (CDS)**.
