@@ -158,4 +158,4 @@ MSc Artificial Intelligence and Data Science, Bangor University
 
 ## License
 
-This project was developed as an MSc dissertation at Bangor University. All rights reserved — the code and content in this repository are provided for reference and portfolio viewing only, and may not be reused, redistributed, or modified without the author's permission.
+This project was developed as an MSc dissertation at Bangor University and is shared here for academic and portfolio purposes.
