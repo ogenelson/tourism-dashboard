@@ -46,7 +46,8 @@ Usage
 Data File
 ---------
     Place 'International Tourism Trends.csv' in the same directory as this
-    script before running.
+    script before running. All custom styling is defined and injected inline
+    in this file (see CUSTOM_CSS below) — no separate assets folder needed.
 """
 
 import logging
@@ -75,18 +76,43 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Colour Palette
 # ---------------------------------------------------------------------------
-# A consistent colour theme is defined centrally so any future changes to
-# branding only need to be made in one place.
+# Ink navy on a white page, with deep teal and bronze as the two accents.
+# Defined centrally so the CSS, the layout, and the Plotly charts all draw
+# from the same set of values.
 COLORS = {
-    "primary": "#1B5E20",
-    "accent_1": "#01579B",
-    "accent_2": "#E65100",
-    "accent_3": "#558B2F",
-    "contrast": "#AD1457",
-    "background": "#F5F5F5",
-    "grid": "#E0E0E0",
-    "text": "#263238",
+    "primary": "#1B2733",      # deep ink — headings, primary lines
+    "accent_1": "#1C3F39",     # deep teal — secondary series, slider/track
+    "accent_2": "#6B5B2A",     # deep bronze — highlight accent
+    "accent_3": "#37475C",     # deep slate blue — tertiary series
+    "contrast": "#6E2C3B",     # deep wine — COVID marker, negative values
+    "background": "#FFFFFF",   # page background
+    "panel": "#FFFFFF",        # chart background, matching the page
+    "grid": "#E2E4E6",
+    "text": "#1B2733",
+    "text_soft": "#5B6672",
 }
+
+# A curated categorical sequence for country-by-country comparisons. Plotly
+# cycles through this list if more categories are selected than colours
+# provided, so it comfortably covers all 15 countries in the data.
+CATEGORICAL_SEQUENCE = [
+    COLORS["primary"],
+    COLORS["accent_2"],
+    COLORS["accent_1"],
+    COLORS["contrast"],
+    "#37475C",   # deep slate blue
+    "#5C4A36",   # deep umber
+    "#4F5D3A",   # deep olive
+    "#52395B",   # deep plum
+]
+
+# A sequential scale (near-white to deep ink-blue) used for the choropleth.
+SEQUENTIAL_SCALE = [
+    [0.0, "#F5F5F4"],
+    [0.4, "#9AA9B7"],
+    [0.75, "#3F5468"],
+    [1.0, "#1B2733"],
+]
 
 
 # ---------------------------------------------------------------------------
@@ -122,10 +148,6 @@ def load_and_clean_data(file_path):
     5. Percentage share columns: Source country share fields use percentage
        strings (e.g., "20%"). These are converted to decimal proportions
        (0.20) to support consistent chart scaling.
-
-    6. Absolute growth column: A derived column is added for the absolute
-       value of arrivals growth. This is used to identify the fastest-changing
-       country in a given year, regardless of direction (growth or decline).
 
     Args:
         file_path (str): Path to the CSV data file.
@@ -202,9 +224,6 @@ def load_and_clean_data(file_path):
                 ).fillna(0) / 100
             )
 
-    # Derived column: absolute growth for ranking fastest-changing destinations
-    df["arrivals_growth_abs"] = df["arrivals_growth"].abs()
-
     logger.info("Data cleaning pipeline completed successfully.")
     return df
 
@@ -218,8 +237,9 @@ def get_chart_template(fig, title_text, yaxis_title=""):
     Apply a consistent visual style to a Plotly figure.
 
     Using a shared template function ensures all charts in the dashboard
-    follow the same layout conventions (white background, centred bold title,
-    consistent grid colour), which reduces visual noise for non-technical users.
+    follow the same layout conventions, which reduces visual noise for
+    non-technical users. Typography mirrors the page: a serif for the
+    title, a plain sans for axes and labels.
 
     Args:
         fig: A Plotly figure object.
@@ -230,19 +250,53 @@ def get_chart_template(fig, title_text, yaxis_title=""):
         The updated Plotly figure with styling applied.
     """
     fig.update_layout(
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-        font=dict(color=COLORS["text"]),
+        plot_bgcolor=COLORS["panel"],
+        paper_bgcolor=COLORS["panel"],
+        font=dict(family="IBM Plex Sans, sans-serif", color=COLORS["text"], size=12),
         title=dict(
-            text=f"<b>{title_text}</b>",
-            x=0.5,
-            font=dict(size=16, color=COLORS["primary"]),
+            text=title_text,
+            x=0.02,
+            xanchor="left",
+            font=dict(
+                family="Source Serif 4, Georgia, serif",
+                size=17,
+                color=COLORS["primary"],
+            ),
         ),
-        xaxis=dict(gridcolor=COLORS["grid"]),
-        yaxis=dict(title=yaxis_title, gridcolor=COLORS["grid"]),
-        margin=dict(l=40, r=40, t=60, b=40),
-        legend=dict(bgcolor="rgba(255, 255, 255, 0.7)"),
+        xaxis=dict(gridcolor=COLORS["grid"], zeroline=False),
+        yaxis=dict(title=yaxis_title, gridcolor=COLORS["grid"], zeroline=False),
+        margin=dict(l=40, r=40, t=56, b=40),
+        legend=dict(bgcolor="rgba(0,0,0,0)"),
+        colorway=CATEGORICAL_SEQUENCE,
     )
+    return fig
+
+
+def apply_country_year_hover(fig, y_label, y_format=",.1f", y_suffix=""):
+    """
+    Replace Plotly Express's default hover text ('country_name=France') with
+    a plain-language tooltip ('France' / 'Year: 2022' / 'Arrivals: 62.3M').
+
+    Each trace produced by a colour-by-country line chart already carries the
+    country name as its trace name, so that name becomes the bold header line
+    and every other field is written out as 'Label: value' beneath it.
+
+    Args:
+        fig: A Plotly figure with one trace per country (e.g. from px.line
+            with color="country_name").
+        y_label (str): Human-readable name for the y-value, e.g. "Arrivals (Millions)".
+        y_format (str): A d3-format spec for the y-value, e.g. ",.1f".
+        y_suffix (str): Optional unit suffix appended after the formatted value.
+
+    Returns:
+        The same figure, with hovertemplate set on every trace.
+    """
+    for trace in fig.data:
+        trace.hovertemplate = (
+            f"<b>{trace.name}</b><br>"
+            f"Year: %{{x}}<br>"
+            f"{y_label}: %{{y:{y_format}}}{y_suffix}<extra></extra>"
+        )
     return fig
 
 
@@ -260,7 +314,303 @@ except (FileNotFoundError, Exception) as e:
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 server = app.server
-app.title = "Interactive Tourism Trends"
+app.title = "Global Tourism Trends"
+
+# ---------------------------------------------------------------------------
+# Custom Stylesheet
+# ---------------------------------------------------------------------------
+# Ink navy, deep teal and bronze accents on a white page, with Source Serif 4
+# for headings and IBM Plex Sans for everything else. Injected straight into
+# the page head below so the whole app stays in a single file.
+CUSTOM_CSS = """
+:root {
+  --ink: #1B2733;
+  --ink-soft: #5B6672;
+  --paper: #FFFFFF;
+  --paper-panel: #FFFFFF;
+  --brass: #6B5B2A;
+  --teal: #1C3F39;
+  --brick: #6E2C3B;
+  --rule: #E2E4E6;
+}
+
+body {
+  background-color: var(--paper);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 15px;
+}
+
+/* ---- Masthead ---------------------------------------------------- */
+
+.masthead {
+  padding: 8px 0 20px 0;
+  border-bottom: 2px solid var(--ink);
+  margin-bottom: 8px;
+}
+
+.masthead-title {
+  font-family: "Source Serif 4", Georgia, serif;
+  font-weight: 600;
+  font-size: 2.05rem;
+  color: var(--ink);
+  margin-bottom: 6px;
+  text-align: left;
+}
+
+.masthead-subtitle {
+  font-family: "IBM Plex Sans", sans-serif;
+  color: var(--ink-soft);
+  font-size: 1rem;
+  max-width: 62ch;
+  margin-bottom: 0;
+  text-align: left;
+}
+
+/* ---- Form controls -------------------------------------------------- */
+
+.control-label {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+  margin-bottom: 4px;
+  display: block;
+}
+
+.Select-control,
+.dash-dropdown .Select-control {
+  border-radius: 2px !important;
+  border-color: var(--rule) !important;
+}
+
+.Select-control:hover {
+  border-color: var(--brass) !important;
+}
+
+.Select--multi .Select-value {
+  background-color: var(--paper-panel) !important;
+  border-color: var(--rule) !important;
+  color: var(--ink) !important;
+  border-radius: 2px !important;
+}
+
+/* ---- Slider --------------------------------------------------------
+   Targets Dash's own slider classes directly rather than shared design
+   tokens, since those tokens are also read by other components (e.g. the
+   Dropdown) and would recolour them too. */
+
+.dash-slider-track {
+  background-color: var(--rule) !important;
+}
+
+.dash-slider-range {
+  background-color: var(--teal) !important;
+}
+
+.dash-slider-thumb {
+  background-color: #FFFFFF !important;
+  border: 2px solid var(--teal) !important;
+  box-shadow: none !important;
+}
+
+.dash-slider-thumb:hover,
+.dash-slider-thumb:focus {
+  border-color: var(--brass) !important;
+  box-shadow: 0 0 0 4px rgba(28, 63, 57, 0.12) !important;
+}
+
+.dash-slider-dot {
+  border-color: var(--rule) !important;
+  background-color: #FFFFFF !important;
+}
+
+.dash-slider-mark {
+  color: var(--ink-soft) !important;
+}
+
+.dash-slider-tooltip {
+  background-color: var(--ink) !important;
+  border: none !important;
+  border-radius: 2px !important;
+}
+
+.dash-slider-tooltip,
+.dash-slider-tooltip * {
+  color: #FFFFFF !important;
+}
+
+/* Older rc-slider-based builds of Dash (pre-4.0) use these class names
+   instead — harmless no-ops on newer Dash, kept for compatibility. */
+.rc-slider-track {
+  background-color: var(--teal) !important;
+}
+
+.rc-slider-handle {
+  border-color: var(--teal) !important;
+}
+
+.rc-slider-handle:hover,
+.rc-slider-handle:active {
+  border-color: var(--brass) !important;
+  box-shadow: none !important;
+}
+
+.rc-slider-dot-active {
+  border-color: var(--teal) !important;
+}
+
+/* ---- Tabs: underlined nav style ------------------------------------- */
+
+.doc-tabs .nav-link {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-weight: 500;
+  color: var(--ink-soft) !important;
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 2px solid transparent !important;
+  border-radius: 0 !important;
+  padding: 8px 4px;
+  margin-right: 28px;
+}
+
+.doc-tabs .nav-link.active {
+  color: var(--ink) !important;
+  border-bottom: 2px solid var(--brass) !important;
+}
+
+.doc-tabs {
+  border-bottom: 1px solid var(--rule) !important;
+}
+
+/* ---- Stat strip ------------------------------------------------------ */
+
+.section-heading {
+  font-family: "Source Serif 4", Georgia, serif;
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 1.1rem;
+  margin-bottom: 14px;
+  text-align: left;
+}
+
+.stat-strip {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--rule);
+}
+
+.stat-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 14px 4px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.stat-label {
+  font-family: "IBM Plex Sans", sans-serif;
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+}
+
+.stat-value {
+  font-family: "Source Serif 4", Georgia, serif;
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 1.15rem;
+  text-align: right;
+}
+
+/* ---- Accordion --------------------------------------------------- */
+
+.doc-accordion .accordion-button {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-weight: 500;
+  color: var(--ink) !important;
+  background-color: var(--paper-panel) !important;
+  box-shadow: none !important;
+}
+
+.doc-accordion .accordion-button:not(.collapsed) {
+  color: var(--teal) !important;
+}
+
+.doc-accordion .accordion-button::after {
+  filter: none;
+}
+
+.doc-accordion .accordion-body {
+  font-family: "IBM Plex Sans", sans-serif;
+  color: var(--ink-soft);
+  line-height: 1.6;
+  background-color: var(--paper-panel);
+}
+
+.doc-accordion .accordion-item {
+  border-color: var(--rule) !important;
+}
+
+/* ---- Buttons and footer ------------------------------------------- */
+
+.btn-quiet {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-weight: 500;
+  background-color: transparent !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--ink) !important;
+  border-radius: 2px !important;
+  padding: 8px 18px;
+}
+
+.btn-quiet:hover {
+  background-color: var(--ink) !important;
+  color: var(--paper) !important;
+}
+
+.footer-note {
+  font-family: "IBM Plex Sans", sans-serif;
+  color: var(--ink-soft);
+  font-style: normal !important;
+  font-size: 0.85rem;
+}
+
+/* ---- Alerts, kept quiet -------------------------------------------- */
+
+.alert {
+  font-family: "IBM Plex Sans", sans-serif;
+  border-radius: 2px;
+}
+"""
+
+# Load the two typefaces used throughout (Source Serif 4 for headings,
+# IBM Plex Sans for everything else), and inject CUSTOM_CSS directly into
+# the page head — so the whole app is one file, no assets/ folder needed.
+app.index_string = f"""
+<!DOCTYPE html>
+<html>
+    <head>
+        {{%metas%}}
+        <title>{{%title%}}</title>
+        {{%favicon%}}
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&display=swap" rel="stylesheet">
+        {{%css%}}
+        <style>
+        {CUSTOM_CSS}
+        </style>
+    </head>
+    <body>
+        {{%app_entry%}}
+        <footer>
+            {{%config%}}
+            {{%scripts%}}
+            {{%renderer%}}
+        </footer>
+    </body>
+</html>
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -271,13 +621,23 @@ app.layout = dbc.Container(
     [
         dcc.Download(id="download-dataframe-csv"),
 
-        # Page title
+        # Masthead
         dbc.Row(
             dbc.Col(
-                html.H1(
-                    "Interactive Visualisation of International Tourism Trends (2015-2022)",
-                    className="text-center my-4",
-                    style={"color": COLORS["primary"]},
+                html.Div(
+                    [
+                        html.H1(
+                            "Global tourism trends",
+                            className="masthead-title",
+                        ),
+                        html.P(
+                            "An exploratory dashboard covering arrivals, receipts, "
+                            "recovery and sustainability across fifteen leading "
+                            "destinations, 2015 to 2022.",
+                            className="masthead-subtitle",
+                        ),
+                    ],
+                    className="masthead",
                 )
             )
         ),
@@ -288,7 +648,7 @@ app.layout = dbc.Container(
                 dbc.Col(
                     html.Div(
                         [
-                            html.Label("Select Countries to Compare:"),
+                            html.Label("Countries to compare", className="control-label"),
                             dcc.Dropdown(
                                 id="country-dropdown",
                                 options=[
@@ -306,7 +666,7 @@ app.layout = dbc.Container(
                 dbc.Col(
                     html.Div(
                         [
-                            html.Label("Select a Year:"),
+                            html.Label("Year", className="control-label"),
                             dcc.Slider(
                                 id="year-slider",
                                 min=df["year"].min() if not df.empty else 2015,
@@ -327,7 +687,7 @@ app.layout = dbc.Container(
                 dbc.Col(
                     html.Div(
                         [
-                            html.Label("Select Map Metric:"),
+                            html.Label("Map metric", className="control-label"),
                             dcc.Dropdown(
                                 id="map-metric-dropdown",
                                 options=[
@@ -361,28 +721,26 @@ app.layout = dbc.Container(
             ],
             id="tabs",
             active_tab="tab-overview",
-            className="mt-3",
+            className="mt-3 doc-tabs",
         ),
         html.Div(id="tab-content", className="p-4 mt-2"),
-        html.Hr(),
+        html.Hr(style={"borderColor": COLORS["grid"]}),
 
         # Footer row: download button and data attribution
         dbc.Row(
             [
                 dbc.Col(
                     dbc.Button(
-                        "Download Data (CSV)",
+                        "Download data (CSV)",
                         id="btn-download",
-                        color="primary",
-                        className="mb-2",
+                        className="mb-2 btn-quiet",
                     ),
                     width={"size": "auto"},
                 ),
                 dbc.Col(
                     html.Span(
-                        "Data Source: UN Tourism, World Bank, National Tourism Boards",
-                        className="text-muted align-middle",
-                        style={"fontStyle": "italic"},
+                        "Data source: UN Tourism, World Bank, national tourism boards",
+                        className="footer-note align-middle",
                     ),
                     width=True,
                     className="text-md-end text-center",
@@ -452,19 +810,19 @@ def render_main_content(tab, countries, year, map_metric):
         # Compute headline insight cards with safe fallbacks
         try:
             top_performer = year_data.nlargest(1, "arrivals_millions").iloc[0]
-            card1_text = f"{top_performer['country_name']}: {top_performer['arrivals_millions']:,.1f}M"
+            card1_text = f"{top_performer['country_name']} — {top_performer['arrivals_millions']:,.1f}M"
         except IndexError:
             card1_text = "N/A"
 
         try:
             highest_earner = year_data.nlargest(1, "tourism_receipts_usd_billions").iloc[0]
-            card2_text = f"{highest_earner['country_name']}: ${highest_earner['tourism_receipts_usd_billions']:,.1f}B"
+            card2_text = f"{highest_earner['country_name']} — ${highest_earner['tourism_receipts_usd_billions']:,.1f}B"
         except IndexError:
             card2_text = "N/A"
 
         try:
-            fastest_grower = year_data.nlargest(1, "arrivals_growth_abs").iloc[0]
-            card3_text = f"{fastest_grower['country_name']}: {fastest_grower['arrivals_growth']:+,.1f}%"
+            fastest_grower = year_data.nlargest(1, "arrivals_growth").iloc[0]
+            card3_text = f"{fastest_grower['country_name']} — {fastest_grower['arrivals_growth']:+,.1f}%"
         except IndexError:
             card3_text = "N/A"
 
@@ -475,16 +833,39 @@ def render_main_content(tab, countries, year, map_metric):
             "tourism_gdp": "Tourism GDP (%)",
             "tourist_density_per_1000_residents": "Tourist Density",
         }
+        # A per-metric d3-format spec and unit suffix for the hover value, so
+        # the tooltip reads as plain "Label: value" text rather than Plotly's
+        # default "field_name=value".
+        metric_hover_formats = {
+            "arrivals_millions": (",.1f", "M"),
+            "tourism_receipts_usd_billions": (",.1f", "B"),
+            "tourism_gdp": (".1f", "%"),
+            "tourist_density_per_1000_residents": (",.0f", " per 1,000 residents"),
+        }
         fig_map = px.choropleth(
             year_data,
             locations="country_code",
             color=map_metric,
             hover_name="country_name",
-            color_continuous_scale=px.colors.sequential.Greens,
+            color_continuous_scale=SEQUENTIAL_SCALE,
             labels=metric_labels,
         )
+        value_format, value_suffix = metric_hover_formats.get(map_metric, (",.1f", ""))
+        fig_map.update_traces(
+            hovertemplate=(
+                f"<b>%{{hovertext}}</b><br>"
+                f"{metric_labels.get(map_metric, 'Value')}: %{{z:{value_format}}}{value_suffix}"
+                f"<extra></extra>"
+            )
+        )
         fig_map.update_layout(
-            geo=dict(showframe=False, showcoastlines=False, projection_type="equirectangular")
+            geo=dict(
+                showframe=False,
+                showcoastlines=False,
+                projection_type="equirectangular",
+                bgcolor=COLORS["panel"],
+                landcolor="#EDEDEC",
+            )
         )
         fig_map = get_chart_template(
             fig_map, f"{metric_labels.get(map_metric, '')} in {year}"
@@ -502,27 +883,32 @@ def render_main_content(tab, countries, year, map_metric):
                         dbc.Col(dcc.Graph(figure=fig_map), md=8),
                         dbc.Col(
                             [
-                                html.H4(f"Key Insights for {year}", className="text-center mb-3"),
-                                dbc.Card(
+                                html.H4(f"Key insights for {year}", className="section-heading"),
+                                html.Div(
                                     [
-                                        dbc.CardHeader("Top Performer (Arrivals)"),
-                                        dbc.CardBody(html.P(card1_text, className="card-text")),
+                                        html.Div(
+                                            [
+                                                html.Span("Top performer, arrivals", className="stat-label"),
+                                                html.Span(card1_text, className="stat-value"),
+                                            ],
+                                            className="stat-item",
+                                        ),
+                                        html.Div(
+                                            [
+                                                html.Span("Highest earner, receipts", className="stat-label"),
+                                                html.Span(card2_text, className="stat-value"),
+                                            ],
+                                            className="stat-item",
+                                        ),
+                                        html.Div(
+                                            [
+                                                html.Span("Fastest year-on-year grower", className="stat-label"),
+                                                html.Span(card3_text, className="stat-value"),
+                                            ],
+                                            className="stat-item",
+                                        ),
                                     ],
-                                    className="mb-3", color="success", inverse=True,
-                                ),
-                                dbc.Card(
-                                    [
-                                        dbc.CardHeader("Highest Earner (Receipts)"),
-                                        dbc.CardBody(html.P(card2_text, className="card-text")),
-                                    ],
-                                    className="mb-3", color="info", inverse=True,
-                                ),
-                                dbc.Card(
-                                    [
-                                        dbc.CardHeader("Fastest YoY Grower"),
-                                        dbc.CardBody(html.P(card3_text, className="card-text")),
-                                    ],
-                                    className="mb-3", color="warning", inverse=True,
+                                    className="stat-strip",
                                 ),
                             ],
                             md=4,
@@ -530,7 +916,7 @@ def render_main_content(tab, countries, year, map_metric):
                         ),
                     ]
                 ),
-                html.Hr(),
+                html.Hr(style={"borderColor": COLORS["grid"]}),
                 dbc.Accordion(
                     [
                         dbc.AccordionItem(
@@ -539,25 +925,26 @@ def render_main_content(tab, countries, year, map_metric):
                             "unique tourism models (Iceland, Rwanda), and rapidly emerging hotspots "
                             "(Vietnam, Georgia). This diversity allows for a comprehensive analysis "
                             "of global tourism trends and recovery patterns.",
-                            title="Why These 15 Countries?",
+                            title="Why these 15 countries?",
                         ),
                         dbc.AccordionItem(
                             html.Ol(
                                 [
-                                    html.Li([html.B("Explore the Map: "), "Use the dropdown to select a metric and see its worldwide distribution for the chosen year."]),
-                                    html.Li([html.B("Select a Timeframe: "), "Use the year slider to focus on a specific year between 2015 and 2022."]),
-                                    html.Li([html.B("Compare & Analyse: "), "Navigate to other tabs and use the country dropdown to compare specific nations over time."]),
+                                    html.Li([html.B("Explore the map: "), "use the dropdown to select a metric and see its worldwide distribution for the chosen year."]),
+                                    html.Li([html.B("Select a timeframe: "), "use the year slider to focus on a specific year between 2015 and 2022."]),
+                                    html.Li([html.B("Compare and analyse: "), "navigate to other tabs and use the country dropdown to compare specific nations over time."]),
                                 ]
                             ),
-                            title="How to Use This Dashboard",
+                            title="How to use this dashboard",
                         ),
                         dbc.AccordionItem(
                             "Primary data synthesised from the United Nations World Tourism Organisation "
                             "(UNWTO), The World Bank, and national tourism boards.",
-                            title="Data Sources",
+                            title="Data sources",
                         ),
                     ],
                     start_collapsed=True,
+                    className="doc-accordion",
                 ),
             ]
         )
@@ -573,6 +960,7 @@ def render_main_content(tab, countries, year, map_metric):
         fig_arrivals = px.line(
             dff, x="year", y="arrivals_millions", color="country_name",
             labels={"arrivals_millions": "Arrivals (Millions)", "year": "Year", "country_name": "Country"},
+            color_discrete_sequence=CATEGORICAL_SEQUENCE,
         )
         # A vertical reference line marks 2020 to anchor the COVID impact visually
         fig_arrivals.update_traces(mode="lines+markers").add_vline(
@@ -580,16 +968,19 @@ def render_main_content(tab, countries, year, map_metric):
             line_color=COLORS["contrast"], annotation_text="COVID-19 Pandemic",
         )
         fig_arrivals = get_chart_template(fig_arrivals, "Tourism Arrivals Over Time", "Arrivals (Millions)")
+        apply_country_year_hover(fig_arrivals, "Arrivals (Millions)", ",.1f", "M")
 
         fig_receipts = px.line(
             dff, x="year", y="tourism_receipts_usd_billions", color="country_name",
             labels={"tourism_receipts_usd_billions": "Receipts (USD Billions)", "year": "Year", "country_name": "Country"},
+            color_discrete_sequence=CATEGORICAL_SEQUENCE,
         )
         fig_receipts.update_traces(mode="lines+markers").add_vline(
             x=2020, line_width=1.5, line_dash="dash",
             line_color=COLORS["contrast"], annotation_text="COVID-19 Pandemic",
         )
         fig_receipts = get_chart_template(fig_receipts, "Tourism Receipts Over Time", "Receipts (USD Billions)")
+        apply_country_year_hover(fig_receipts, "Receipts (USD Billions)", ",.1f", "B")
 
         # Single-country recovery rate chart: compares 2022 arrivals to 2019 baseline
         single_country_content = []
@@ -602,13 +993,16 @@ def render_main_content(tab, countries, year, map_metric):
             fig_bar_recovery = px.bar(
                 x=["Recovery Rate %"], y=[recovery_rate],
                 labels={"y": "Value (%)"},
-                color_discrete_sequence=[COLORS["accent_3"]],
+                color_discrete_sequence=[COLORS["accent_1"]],
                 text_auto=".1f", height=300,
             )
             fig_bar_recovery = get_chart_template(
                 fig_bar_recovery, f"Recovery Rate in 2022 vs 2019 ({country})"
             ).update_yaxes(range=[0, max(110, recovery_rate + 10)])
-            single_country_content = [html.Hr(), dcc.Graph(figure=fig_bar_recovery)]
+            fig_bar_recovery.update_traces(
+                hovertemplate="Recovery rate: %{y:.1f}%<extra></extra>"
+            )
+            single_country_content = [html.Hr(style={"borderColor": COLORS["grid"]}), dcc.Graph(figure=fig_bar_recovery)]
 
         return html.Div(
             [
@@ -632,6 +1026,9 @@ def render_main_content(tab, countries, year, map_metric):
             color_discrete_sequence=[COLORS["accent_2"]], height=400,
         )
         fig_bar_gdp = get_chart_template(fig_bar_gdp, f"Tourism's Contribution to GDP ({year})", "Tourism GDP (%)")
+        fig_bar_gdp.update_traces(
+            hovertemplate="Country: %{x}<br>Tourism GDP: %{y:.1f}%<extra></extra>"
+        )
 
         fig_bar_employment = px.bar(
             year_data.sort_values(by="tourism_employment_thousands", ascending=False),
@@ -640,18 +1037,25 @@ def render_main_content(tab, countries, year, map_metric):
             color_discrete_sequence=[COLORS["accent_1"]], height=400,
         )
         fig_bar_employment = get_chart_template(fig_bar_employment, f"Tourism Employment ({year})", "Employment (Thousands)")
+        fig_bar_employment.update_traces(
+            hovertemplate="Country: %{x}<br>Employment: %{y:,.0f} thousand<extra></extra>"
+        )
 
         fig_gdp_line = px.line(
             dff, x="year", y="tourism_gdp", color="country_name",
             labels={"tourism_gdp": "Tourism GDP (%)", "year": "Year", "country_name": "Country"},
+            color_discrete_sequence=CATEGORICAL_SEQUENCE,
         )
         fig_gdp_line = get_chart_template(fig_gdp_line, "Tourism GDP Over Time", "Tourism GDP (%)")
+        apply_country_year_hover(fig_gdp_line, "Tourism GDP", ".1f", "%")
 
         fig_employment_line = px.line(
             dff, x="year", y="tourism_employment_thousands", color="country_name",
             labels={"tourism_employment_thousands": "Employment (Thousands)", "year": "Year", "country_name": "Country"},
+            color_discrete_sequence=CATEGORICAL_SEQUENCE,
         )
         fig_employment_line = get_chart_template(fig_employment_line, "Tourism Employment Over Time", "Employment (Thousands)")
+        apply_country_year_hover(fig_employment_line, "Employment", ",.0f", " thousand")
 
         return html.Div(
             [
@@ -662,7 +1066,7 @@ def render_main_content(tab, countries, year, map_metric):
                         dbc.Col(dcc.Graph(figure=fig_bar_employment), md=6),
                     ]
                 ),
-                html.Hr(),
+                html.Hr(style={"borderColor": COLORS["grid"]}),
                 dbc.Row(
                     [
                         dbc.Col(dcc.Graph(figure=fig_gdp_line), md=6),
@@ -678,8 +1082,10 @@ def render_main_content(tab, countries, year, map_metric):
             dff, x="year", y="average_length_of_stay_days", color="country_name",
             labels={"average_length_of_stay_days": "Avg. Stay (Days)", "year": "Year", "country_name": "Country"},
             markers=True,
+            color_discrete_sequence=CATEGORICAL_SEQUENCE,
         )
         fig_stay = get_chart_template(fig_stay, "Average Length of Stay", "Average Days")
+        apply_country_year_hover(fig_stay, "Average Stay", ".1f", " days")
 
         # Pie chart for source markets is only meaningful for a single country
         single_country_content = html.Div()
@@ -700,9 +1106,12 @@ def render_main_content(tab, countries, year, map_metric):
                     values=[s * 100 for s, n in valid_sources],
                     names=[n for s, n in valid_sources],
                     hole=0.3,
-                    color_discrete_sequence=[COLORS["accent_2"], COLORS["accent_3"], COLORS["contrast"]],
+                    color_discrete_sequence=[COLORS["accent_2"], COLORS["accent_1"], COLORS["contrast"]],
                 )
-                fig_pie_sources.update_traces(textposition="inside", textinfo="percent+label")
+                fig_pie_sources.update_traces(
+                    textposition="inside", textinfo="percent+label",
+                    hovertemplate="Source country: %{label}<br>Share of visitors: %{value:.1f}%<extra></extra>",
+                )
                 fig_pie_sources = get_chart_template(fig_pie_sources, f"Top Source Countries ({country}, {year})")
                 single_country_content = dcc.Graph(figure=fig_pie_sources)
             except Exception:
@@ -714,7 +1123,7 @@ def render_main_content(tab, countries, year, map_metric):
             [
                 html.P("Select a single country to see a breakdown of its top visitor markets for the chosen year."),
                 dcc.Graph(figure=fig_stay),
-                html.Hr(),
+                html.Hr(style={"borderColor": COLORS["grid"]}),
                 single_country_content,
             ]
         )
@@ -729,7 +1138,7 @@ def render_main_content(tab, countries, year, map_metric):
             go.Bar(
                 x=year_data["country_name"], y=year_data["renewable_energy"],
                 name="Renewable Energy Share (%)", marker_color=COLORS["accent_1"],
-                hovertemplate="<b>%{x}</b><br>Renewable Energy: %{y:.1f}%<extra></extra>",
+                hovertemplate="Country: %{x}<br>Renewable Energy: %{y:.1f}%<extra></extra>",
             ),
             secondary_y=False,
         )
@@ -737,7 +1146,7 @@ def render_main_content(tab, countries, year, map_metric):
             go.Bar(
                 x=year_data["country_name"], y=year_data["tourist_density_per_1000_residents"],
                 name="Tourist Density", marker_color=COLORS["contrast"],
-                hovertemplate="<b>%{x}</b><br>Tourist Density: %{y:,.0f}<extra></extra>",
+                hovertemplate="Country: %{x}<br>Tourist Density: %{y:,.0f} per 1,000 residents<extra></extra>",
             ),
             secondary_y=True,
         )
